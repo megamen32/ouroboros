@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import threading
+import time
 import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -908,6 +909,11 @@ def _normalize_input_schema(value: Any) -> Dict[str, Any]:
 _manager_lock = threading.Lock()
 _manager: Optional[MCPManager] = None
 
+# Rate limit for the empty-tool retry so a permanently dead server does not
+# turn every capability build into a connect attempt.
+_EMPTY_TOOLS_RETRY_AT = 0.0
+_EMPTY_TOOLS_RETRY_COOLDOWN_SEC = 60.0
+
 
 def get_manager() -> MCPManager:
     """Return the process-global manager."""
@@ -930,6 +936,25 @@ def reconfigure_from_settings(settings: Dict[str, Any]) -> None:
     get_manager().reconfigure(settings)
 
 
+def _retry_empty_tool_servers(manager: MCPManager) -> None:
+    """Recover workers that configured while an MCP server was unreachable.
+
+    ``reconfigure`` compares a settings fingerprint, so a worker whose refresh
+    failed during an outage keeps zero tools forever — the mtime check alone
+    never triggers a retry once the server is back. Retry empty-tool servers
+    in the background, rate-limited."""
+    global _EMPTY_TOOLS_RETRY_AT
+    if not manager.is_configured():
+        return
+    if not manager.enabled_servers_without_tools():
+        return
+    now = time.monotonic()
+    if now < _EMPTY_TOOLS_RETRY_AT:
+        return
+    _EMPTY_TOOLS_RETRY_AT = now + _EMPTY_TOOLS_RETRY_COOLDOWN_SEC
+    manager.refresh_all_background(reason="empty_tools_retry")
+
+
 def ensure_configured_from_settings(*, refresh: bool = False) -> None:
     """Configure this process's manager; workers have separate Python heaps."""
     from ouroboros.config import SETTINGS_PATH, load_settings
@@ -939,13 +964,15 @@ def ensure_configured_from_settings(*, refresh: bool = False) -> None:
         mtime_ns = SETTINGS_PATH.stat().st_mtime_ns if SETTINGS_PATH.exists() else None
     except OSError:
         mtime_ns = None
-    if manager.is_configured() and manager.settings_mtime_ns() is None:
-        return
-    if manager.is_configured() and manager.settings_mtime_ns() == mtime_ns:
+    if manager.is_configured() and (
+        manager.settings_mtime_ns() is None or manager.settings_mtime_ns() == mtime_ns
+    ):
+        _retry_empty_tool_servers(manager)
         return
     changed = manager.reconfigure(load_settings(), settings_mtime_ns=mtime_ns)
     if refresh and changed:
         manager.refresh_all()
+    _retry_empty_tool_servers(manager)
 
 
 def refresh_all_background(*, reason: str = "settings") -> None:
