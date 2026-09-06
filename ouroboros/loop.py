@@ -3411,10 +3411,6 @@ def _setup_dynamic_tools(tools_registry, tool_schemas, messages):
         for schema in tool_schemas
         if str(schema.get("function", {}).get("name") or "").strip()
     }
-    capability_index = _large_tool_capability_index(tool_schemas, messages)
-    if capability_index:
-        _append_or_merge_user_message(messages, capability_index)
-
     def _handle_list_tools(ctx=None, **kwargs):
         omissions = (
             tools_registry.capability_omissions()
@@ -7144,6 +7140,14 @@ def run_llm_loop(
             if tool_aware_mode != active_context_mode:
                 messages[:] = context_fit_plan.reproject_transcript(messages, tool_aware_mode)
                 active_context_mode = tool_aware_mode
+
+    # Add large-envelope navigation only after the startup transcript has reached
+    # its final projected form.  context_fit_plan.reproject_transcript() may rebuild
+    # messages and would otherwise silently discard a notice injected earlier by
+    # _setup_dynamic_tools, leaving the model tool-blind despite a complete schema.
+    capability_index = _large_tool_capability_index(tool_schemas, messages)
+    if capability_index:
+        _append_or_merge_user_message(messages, capability_index)
 
     if _preferred_context_mode == "max" and active_context_mode != "max":
         # Make the effective-vs-preferred downgrade owner-visible and durable.

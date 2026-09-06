@@ -157,8 +157,7 @@ def test_large_tool_envelope_adds_mission_relevant_exact_name_index():
         {"type": "function", "function": {"name": "mcp_unrelated__noop", "description": "", "parameters": {"type": "object", "properties": {}}}},
     ])
     messages = [{"role": "user", "content": "Process Telegram and UserIO backlog."}]
-    loop_mod._setup_dynamic_tools(registry, synthetic, messages)
-    notice = "\n".join(str(m.get("content") or "") for m in messages)
+    notice = loop_mod._large_tool_capability_index(synthetic, messages)
     assert "Large active tool envelope" in notice
     assert "mcp_userio__userio_inbox_list_new" in notice
     assert "mcp_userio__userio_draft_create" in notice
@@ -166,3 +165,12 @@ def test_large_tool_envelope_adds_mission_relevant_exact_name_index():
     assert "mcp_telegram__telegram_read_messages" in notice
     assert "mcp_unrelated__noop" not in notice
     assert "already active" in notice
+
+
+def test_large_tool_index_is_injected_after_startup_reprojection():
+    import inspect
+    source = inspect.getsource(loop_mod.run_llm_loop)
+    projection = source.index("context_fit_plan.reproject_transcript")
+    injection = source.index("capability_index = _large_tool_capability_index", projection)
+    first_context_downgrade_notice = source.index('if _preferred_context_mode == "max"', projection)
+    assert projection < injection < first_context_downgrade_notice
