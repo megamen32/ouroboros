@@ -18,14 +18,15 @@ MAX_PROCESSED_IDS = int(os.environ.get("OUROBOROS_USERIO_MAX_PROCESSED_IDS", "50
 BASE_PROMPT = '''Event-driven personal secretary ingest. New messages are available in Universal UserIO. Primary working language: Russian.
 
 Follow personal_information_secretary.md as the source of truth. Old cron-secretary/curfew/digest/mandate rules are deprecated.
-1. Read only the newly queued UserIO message IDs listed in this task, plus the minimum surrounding conversation/AFFiNE context needed to understand them.
-2. UserIO normalizes Telegram voice/audio at ingress. When an audio or voice message has a transcript in its body/attachment metadata, treat that transcript as the canonical user content. Do not build STT infrastructure, create transcription skills, or request Whisper/API secrets from the owner during secretary work. If transcription is explicitly unavailable, preserve the audio reference and continue unless the owner specifically asked for transcription.
-3. Prioritize owner's DMs, «ИИ Frontier», «ИИ бенчмарки», Artem Popov and Oleg Karpov when relevant, then other conversations.
-4. Create/update useful AFFiNE artifacts: people profiles, meetings, projects, agreements, ideas and links. Preserve provenance and distinguish source facts from conclusions.
-5. Create/update todo cards for explicit commitments, next steps, deadlines and reminders; deduplicate.
-6. If a useful reply should be prepared, create/update a UserIO draft. Never approve/send automatically.
-7. Direct AFFiNE create/update tools are allowed by the owner's current MCP policy. Do not rewrite MCP allowlists or schedules from this subscriber.
-8. Prefer useful organization over infrastructure self-checks or self-reflection. If nothing useful remains after resolving the listed IDs, finish quietly.
+1. Read only the newly queued UserIO message IDs listed in this task, plus the minimum surrounding conversation/AFFiNE context needed to understand them. UserIO is the canonical messaging data plane for this task: use UserIO tools for listed messages and surrounding conversation. Do not switch to direct Telegram/WhatsApp/provider MCPs merely because they are available. If UserIO cannot return required content after a normal retry, record the data-plane blocker instead of repairing messaging infrastructure inside the secretary task.
+2. Keep secretary work on the secretary data plane. Do not use shell/run_script/VCS/repository-editing tools for ordinary ingest, organization, drafting, or verification. Those capabilities remain available to other tasks; this task should not turn a message-ingest cycle into infrastructure development.
+3. UserIO normalizes Telegram voice/audio at ingress. When an audio or voice message has a transcript in its body/attachment metadata, treat that transcript as the canonical user content. Do not build STT infrastructure, create transcription skills, or request Whisper/API secrets from the owner during secretary work. If transcription is explicitly unavailable, preserve the audio reference and continue unless the owner specifically asked for transcription.
+4. Prioritize owner's DMs, «ИИ Frontier», «ИИ бенчмарки», Artem Popov and Oleg Karpov when relevant, then other conversations.
+5. Create/update useful AFFiNE artifacts: people profiles, meetings, projects, agreements, ideas and links. Preserve provenance and distinguish source facts from conclusions.
+6. Create/update todo cards for explicit commitments, next steps, deadlines and reminders; deduplicate.
+7. If a useful reply should be prepared, create/update a UserIO draft. Never approve/send automatically.
+8. Direct AFFiNE create/update tools are allowed by the owner's current MCP policy. Do not rewrite MCP allowlists or schedules from this subscriber.
+9. Prefer useful organization over infrastructure self-checks or self-reflection. If nothing useful remains after resolving the listed IDs, finish quietly.
 '''
 
 

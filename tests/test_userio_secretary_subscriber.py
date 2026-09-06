@@ -109,3 +109,11 @@ def test_secretary_prompt_treats_userio_audio_transcript_as_canonical():
     assert "treat that transcript as the canonical user content" in prompt
     assert "Do not build STT infrastructure" in prompt
     assert "request Whisper/API secrets" in prompt
+
+
+def test_secretary_prompt_keeps_messaging_on_userio_data_plane():
+    from ouroboros.userio_secretary_subscriber import BASE_PROMPT
+    assert "UserIO is the canonical messaging data plane" in BASE_PROMPT
+    assert "Do not switch to direct Telegram/WhatsApp/provider MCPs" in BASE_PROMPT
+    assert "Do not use shell/run_script/VCS/repository-editing tools" in BASE_PROMPT
+    assert "Those capabilities remain available to other tasks" in BASE_PROMPT
