@@ -5,7 +5,17 @@ from pathlib import Path
 SETTINGS=Path(os.environ.get("OUROBOROS_SETTINGS","/home/roomhacker/Ouroboros/data/settings.json"))
 OUROBOROS_URL=os.environ.get("OUROBOROS_URL","http://127.0.0.1:8765").rstrip('/')
 URI="userio://inbox/unread"
-PROMPT='''Event-driven personal secretary ingest. New messages are available in Universal UserIO. This is NOT a scheduled wake-up and NOT permission to send replies.\n\n1. Read the newest unread UserIO items with mcp_userio tools and identify items not yet reflected in the personal knowledge system.\n2. Read relevant AFFiNE context using read-only mcp_affine tools.\n3. Extract useful facts, commitments, tasks, people/project updates and document references. Preserve exact provenance (source, message_id, conversation_id when available).\n4. For safe append-only writes use ONLY mcp_affine_writer__propose_append followed by mcp_affine_writer__commit_append. Categories allowed: inbox_note, task, journal. Never use direct AFFiNE write tools.\n5. Do not send messages, create outbound replies, or mark inbox items seen. Avoid duplicate writes: writer proposal IDs are deterministic from content+provenance.\n6. Prefer organizing useful information over self-reflection. If nothing actionable or knowledge-worthy arrived, finish without writing.\n'''
+PROMPT='''Event-driven personal secretary ingest. New messages are available in Universal UserIO. Primary working language: Russian. This is NOT permission to auto-send replies.
+
+Follow the current personal_information_secretary mission; old cron-secretary/curfew/digest/mandate rules are deprecated.
+1. Read newest unread UserIO items and identify information not yet reflected in AFFiNE/todo.
+2. Read relevant Telegram/UserIO/AFFiNE context. For Telegram, prioritize owner's DMs, «ИИ Frontier», «ИИ бенчмарки», Artem Popov and Oleg Karpov when relevant, then other conversations.
+3. Update or create useful AFFiNE artifacts: people profiles, meetings, projects, agreements, ideas and links. Preserve provenance (source, message_id/conversation_id/date when available) and distinguish source facts from your conclusions.
+4. Create/update todo cards for explicit commitments, next steps, deadlines and reminders; deduplicate against existing cards.
+5. If a useful reply should be prepared, create/update a UserIO draft. Do NOT approve/send automatically.
+6. Use direct AFFiNE MCP create/update tools when needed; the idempotent affine_writer may be used for append-only notes when appropriate.
+7. Prefer useful organization over infrastructure self-checks or self-reflection. If nothing useful arrived, finish quietly.
+'''
 
 def cfg():
  d=json.loads(SETTINGS.read_text()); s=next(x for x in d.get('MCP_SERVERS',[]) if x.get('id')=='userio'); return s['url'],s.get('auth_header') or 'Authorization',s.get('auth_token') or ''
