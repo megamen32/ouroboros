@@ -101,3 +101,11 @@ def test_reconcile_failed_inflight_returns_ids_to_pending(tmp_path, monkeypatch)
     result = subscriber.reconcile_state(subscriber.load_state())
     assert result["in_flight"] is None
     assert result["pending_ids"] == ["m1"]
+
+
+def test_secretary_prompt_treats_userio_audio_transcript_as_canonical():
+    prompt = subscriber.BASE_PROMPT
+    assert "UserIO normalizes Telegram voice/audio at ingress" in prompt
+    assert "treat that transcript as the canonical user content" in prompt
+    assert "Do not build STT infrastructure" in prompt
+    assert "request Whisper/API secrets" in prompt

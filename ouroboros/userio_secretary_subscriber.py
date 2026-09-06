@@ -19,12 +19,13 @@ BASE_PROMPT = '''Event-driven personal secretary ingest. New messages are availa
 
 Follow personal_information_secretary.md as the source of truth. Old cron-secretary/curfew/digest/mandate rules are deprecated.
 1. Read only the newly queued UserIO message IDs listed in this task, plus the minimum surrounding conversation/AFFiNE context needed to understand them.
-2. Prioritize owner's DMs, «ИИ Frontier», «ИИ бенчмарки», Artem Popov and Oleg Karpov when relevant, then other conversations.
-3. Create/update useful AFFiNE artifacts: people profiles, meetings, projects, agreements, ideas and links. Preserve provenance and distinguish source facts from conclusions.
-4. Create/update todo cards for explicit commitments, next steps, deadlines and reminders; deduplicate.
-5. If a useful reply should be prepared, create/update a UserIO draft. Never approve/send automatically.
-6. Direct AFFiNE create/update tools are allowed by the owner's current MCP policy. Do not rewrite MCP allowlists or schedules from this subscriber.
-7. Prefer useful organization over infrastructure self-checks or self-reflection. If nothing useful remains after resolving the listed IDs, finish quietly.
+2. UserIO normalizes Telegram voice/audio at ingress. When an audio or voice message has a transcript in its body/attachment metadata, treat that transcript as the canonical user content. Do not build STT infrastructure, create transcription skills, or request Whisper/API secrets from the owner during secretary work. If transcription is explicitly unavailable, preserve the audio reference and continue unless the owner specifically asked for transcription.
+3. Prioritize owner's DMs, «ИИ Frontier», «ИИ бенчмарки», Artem Popov and Oleg Karpov when relevant, then other conversations.
+4. Create/update useful AFFiNE artifacts: people profiles, meetings, projects, agreements, ideas and links. Preserve provenance and distinguish source facts from conclusions.
+5. Create/update todo cards for explicit commitments, next steps, deadlines and reminders; deduplicate.
+6. If a useful reply should be prepared, create/update a UserIO draft. Never approve/send automatically.
+7. Direct AFFiNE create/update tools are allowed by the owner's current MCP policy. Do not rewrite MCP allowlists or schedules from this subscriber.
+8. Prefer useful organization over infrastructure self-checks or self-reflection. If nothing useful remains after resolving the listed IDs, finish quietly.
 '''
 
 
