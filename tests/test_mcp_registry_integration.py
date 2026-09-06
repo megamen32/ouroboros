@@ -315,3 +315,67 @@ def test_disabled_manager_hides_tools(registry):
     mcp_client.reconfigure_from_settings(_settings(_good_server(id="svc"), enabled=False))
     names = {schema["function"]["name"] for schema in registry.schemas()}
     assert "mcp_svc__ping" not in names
+
+
+def test_durable_mcp_write_blocks_structured_secret_before_transport(registry, monkeypatch):
+    fake = _FakeTransport(
+        [{"name": "append_markdown", "description": "write", "input_schema": {"type": "object", "properties": {}}}]
+    )
+    _wire_singleton(fake)
+    mcp_client.reconfigure_from_settings(_settings(_good_server(id="affine")))
+    mcp_client.get_manager().refresh_server("affine")
+    import ouroboros.safety as safety_mod
+    monkeypatch.setattr(safety_mod, "check_safety", lambda *a, **kw: (True, ""))
+
+    out = registry.execute("mcp_affine__append_markdown", {"markdown": "note", "api_key": "fixture-secret-value-12345"})
+
+    assert "SECRET_PERSISTENCE_BLOCKED" in out
+    assert fake.call_calls == []
+
+
+def test_durable_mcp_write_blocks_inline_labeled_short_secret(registry, monkeypatch):
+    fake = _FakeTransport(
+        [{"name": "kanban_change", "description": "write", "input_schema": {"type": "object", "properties": {}}}]
+    )
+    _wire_singleton(fake)
+    mcp_client.reconfigure_from_settings(_settings(_good_server(id="todo")))
+    mcp_client.get_manager().refresh_server("todo")
+    import ouroboros.safety as safety_mod
+    monkeypatch.setattr(safety_mod, "check_safety", lambda *a, **kw: (True, ""))
+
+    out = registry.execute("mcp_todo__kanban_change", {"body": "Whisper-ключ `abc123XYZ` надо ротировать"})
+
+    assert "SECRET_PERSISTENCE_BLOCKED" in out
+    assert fake.call_calls == []
+
+
+def test_mcp_read_with_secret_shaped_query_is_not_reclassified_as_persistence(registry, monkeypatch):
+    fake = _FakeTransport(
+        [{"name": "search_docs", "description": "read", "input_schema": {"type": "object", "properties": {}}}]
+    )
+    _wire_singleton(fake)
+    mcp_client.reconfigure_from_settings(_settings(_good_server(id="affine")))
+    mcp_client.get_manager().refresh_server("affine")
+    import ouroboros.safety as safety_mod
+    monkeypatch.setattr(safety_mod, "check_safety", lambda *a, **kw: (True, ""))
+
+    out = registry.execute("mcp_affine__search_docs", {"query": "token: abc123XYZ"})
+
+    assert "SECRET_PERSISTENCE_BLOCKED" not in out
+    assert fake.call_calls
+
+
+def test_durable_mcp_normal_write_still_dispatches(registry, monkeypatch):
+    fake = _FakeTransport(
+        [{"name": "append_markdown", "description": "write", "input_schema": {"type": "object", "properties": {}}}]
+    )
+    _wire_singleton(fake)
+    mcp_client.reconfigure_from_settings(_settings(_good_server(id="affine")))
+    mcp_client.get_manager().refresh_server("affine")
+    import ouroboros.safety as safety_mod
+    monkeypatch.setattr(safety_mod, "check_safety", lambda *a, **kw: (True, ""))
+
+    out = registry.execute("mcp_affine__append_markdown", {"markdown": "Встреча перенесена на вторник"})
+
+    assert "echo(affine/append_markdown)" in out
+    assert len(fake.call_calls) == 1

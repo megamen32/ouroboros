@@ -782,6 +782,62 @@ def _normalize_dispatch_path_args(ctx: Any, name: str, args: Dict[str, Any]) -> 
     )
 
 
+# External memory/task systems are durable sinks.  Secret redaction in logs is not
+# enough: without a pre-dispatch fence the raw MCP arguments can still be persisted
+# remotely while the local observability copy looks safely masked.  Classify by
+# mutating verb so read/search calls keep working, and fail closed only when the
+# outgoing payload itself contains credential-shaped material.
+_MCP_DURABLE_WRITE_VERBS: dict[str, tuple[str, ...]] = {
+    "affine": ("create_", "add_", "remove_", "move_", "append_", "update_", "resolve_", "set_", "clear_"),
+    "todo": ("kanban_change", "kanban_delete", "kanban_attach_webhook"),
+    "affine_writer": ("propose_", "commit_"),
+}
+_MCP_INLINE_SECRET_CONTEXT_RE = re.compile(
+    r"(?ix)(?:api[\s_-]*key|access[\s_-]*token|auth[\s_-]*token|client[\s_-]*secret|"
+    r"password|passphrase|secret|token|credential|whisper[\s_-]*(?:key|ключ)|"
+    r"ключ|токен|парол(?:ь|я))\s*(?:[:=]\s*|[`'\"«]+)"
+    r"[A-Za-z0-9_./+=:-]{6,}"
+)
+
+
+def _mcp_durable_write(name: str) -> bool:
+    text = str(name or "")
+    if not text.startswith("mcp_") or "__" not in text:
+        return False
+    server, raw = text[4:].split("__", 1)
+    verbs = _MCP_DURABLE_WRITE_VERBS.get(server)
+    return bool(verbs and raw.startswith(verbs))
+
+
+def _mcp_secret_persistence_block(name: str, args: Dict[str, Any]) -> str:
+    if not _mcp_durable_write(name):
+        return ""
+    try:
+        from ouroboros.observability import redact_projection
+
+        if redact_projection(args).records:
+            return (
+                "⚠️ SECRET_PERSISTENCE_BLOCKED: durable MCP write contains credential-like "
+                "material. Do not copy secrets into AFFiNE/Todo or other durable memory; "
+                "store only a redacted fact/provenance note and keep the value in the "
+                "owner-controlled secret store."
+            )
+    except Exception:
+        # The persistence boundary must not fail open merely because the shared
+        # redactor is temporarily unavailable.
+        return (
+            "⚠️ SECRET_PERSISTENCE_BLOCKED: could not verify this durable MCP write "
+            "for credential material; refusing persistence rather than failing open."
+        )
+    if _MCP_INLINE_SECRET_CONTEXT_RE.search(repr(args)):
+        return (
+            "⚠️ SECRET_PERSISTENCE_BLOCKED: durable MCP write contains an inline "
+            "credential value. Persist only a redacted fact/provenance note; keep the "
+            "value in the owner-controlled secret store."
+        )
+    return ""
+
+
 _WEB_TOOLS = frozenset({"web_search", "browse_page", "browser_action", "youtube_transcript"})
 _REPO_MUTATION_TOOLS = frozenset({
     "write_file",
@@ -1940,7 +1996,10 @@ class ToolRegistry:
         return dispatch_extension_tool(self._ctx, name, ext_tool, args)
 
     def _dispatch_mcp_tool(self, name: str, args: Dict[str, Any]) -> str:
-        """Run a provider-safe MCP tool after the normal safety supervisor."""
+        """Run a provider-safe MCP tool after deterministic persistence guards."""
+        persistence_block = _mcp_secret_persistence_block(name, args)
+        if persistence_block:
+            return persistence_block
         from ouroboros.safety import check_safety as _mcp_check_safety
         is_safe, safety_msg = _mcp_check_safety(
             name,
