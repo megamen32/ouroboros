@@ -44,6 +44,26 @@ def _ledger(data_root):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def test_subscription_openai_compatible_settles_zero(monkeypatch, tmp_path):
+    monkeypatch.setenv("OUROBOROS_ZERO_COST_OPENAI_COMPATIBLE", "true")
+    req = ua.AttemptRequest(
+        drive_root=tmp_path, task_id="t-sub", root_task_id="t-sub",
+        provider="openai-compatible", model="minimax/MiniMax-M3",
+        category="task", reservation_usd=1.0,
+    )
+    reservation = ua.reserve_attempt(req)
+    ua.mark_dispatched(reservation)
+    ua.settle_attempt(
+        reservation, {"prompt_tokens": 100, "completion_tokens": 50},
+        cost_usd=0.42, cost_final=True,
+    )
+    rows = _ledger(tmp_path)
+    row = [r for r in rows if r.get("attempt_id") == reservation.attempt_id][-1]
+    assert row["state"] == "settled"
+    assert row["cost_usd"] == 0.0
+    assert row["cost_final"] is True
+
+
 def test_attempt_lifecycle_and_root_projection(data_root):
     reservation = ua.reserve_attempt(_request(data_root, root_limit_usd=2.0))
     ua.mark_dispatched(reservation)
@@ -1367,3 +1387,27 @@ def test_a_non_final_projection_names_its_cause(data_root):
         root_task_id="root", spend_usd=0.0)
     free = ua.usage_projection(data_root / "free")
     assert free["non_final_rows"] == 0 and free["cost_final"] is True
+
+def test_daily_budget_blocks_paid_attempts_but_not_subscription_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOTAL_BUDGET", "100")
+    monkeypatch.setenv("OUROBOROS_DAILY_BUDGET_USD", "1")
+    monkeypatch.delenv("OUROBOROS_ZERO_COST_OPENAI_COMPATIBLE", raising=False)
+    paid = ua.AttemptRequest(
+        drive_root=tmp_path, task_id="daily-paid", root_task_id="daily-paid",
+        provider="openrouter", model="openai/gpt-test", reservation_usd=0.75,
+    )
+    r = ua.reserve_attempt(paid); ua.mark_dispatched(r); ua.settle_attempt(r, {}, cost_usd=0.75, cost_final=True)
+    with pytest.raises(ua.BudgetExceeded) as exc:
+        ua.reserve_attempt(ua.AttemptRequest(
+            drive_root=tmp_path, task_id="daily-paid-2", root_task_id="daily-paid-2",
+            provider="openrouter", model="openai/gpt-test", reservation_usd=0.30,
+        ))
+    assert exc.value.limit_scope == "daily"
+
+    monkeypatch.setenv("OUROBOROS_ZERO_COST_OPENAI_COMPATIBLE", "true")
+    free = ua.reserve_attempt(ua.AttemptRequest(
+        drive_root=tmp_path, task_id="daily-free", root_task_id="daily-free",
+        provider="openai-compatible", model="minimax/MiniMax-M3", reservation_usd=50.0,
+    ))
+    assert free.reservation_upper_bound_usd == 0.0
+

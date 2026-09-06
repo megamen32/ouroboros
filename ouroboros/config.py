@@ -124,7 +124,12 @@ SETTINGS_DEFAULTS = {**UPDATE_SETTINGS_DEFAULTS,
     # no longer stops on heartbeat staleness, but custom saved values stay loud.
     "OUROBOROS_PLAN_TASK_SWARM_HEARTBEAT_STALE_SEC": 120,
     "TOTAL_BUDGET": 10.0,
+    # Rolling 24h cash-spend safety rail. 0 disables.
+    "OUROBOROS_DAILY_BUDGET_USD": 0.0,
     "OUROBOROS_PER_TASK_COST_USD": 20.0,
+    # Treat subscription-backed OpenAI-compatible routes (e.g. OmniRoute) as zero
+    # marginal cash cost in the internal ledger. Explicit owner opt-in only.
+    "OUROBOROS_ZERO_COST_OPENAI_COMPATIBLE": False,
     # cloud.ru catalog prices are RUB per 1M while the budget is USD. No implicit
     # exchange rate: the owner must explicitly configure the divisor.
     "OUROBOROS_RUB_USD_RATE": "",

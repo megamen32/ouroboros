@@ -22,6 +22,7 @@ import pathlib
 import threading
 import time
 import uuid
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Tuple
 
@@ -479,6 +480,12 @@ def usage_breakdown(
 
 
 def _reservation_cost(request: AttemptRequest) -> Optional[float]:
+    if (
+        str(request.provider or "").strip().lower() == "openai-compatible"
+        and str(os.environ.get("OUROBOROS_ZERO_COST_OPENAI_COMPATIBLE", "")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        return 0.0
     explicit = request.max_budget_usd if request.max_budget_usd is not None else request.reservation_usd
     if explicit is not None:
         return _number(explicit)
@@ -613,6 +620,34 @@ def _global_limit(request: AttemptRequest) -> float:
         return 10.0
 
 
+def _daily_limit_usd() -> float:
+    try:
+        value = float(os.environ.get("OUROBOROS_DAILY_BUDGET_USD", "0") or 0.0)
+        return value if value > 0 else float("inf")
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _rows_within_rolling_window(rows: Sequence[Dict[str, Any]], *, hours: float = 24.0) -> list[Dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max(0.0, float(hours)))
+    out: list[Dict[str, Any]] = []
+    for row in rows:
+        raw = str(row.get("ts") or "").strip()
+        if not raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                out.append(row)
+        except (TypeError, ValueError):
+            # Old/unparseable rows are excluded from the rolling window but remain
+            # covered by TOTAL_BUDGET's lifetime safety rail.
+            continue
+    return out
+
+
 def _active_root_budget_fence(root: pathlib.Path, root_task_id: str) -> Optional[Dict[str, Any]]:
     """Read the queue's atomic durable root-dispatch fence, if present."""
     root_task_id = str(root_task_id or "").strip()
@@ -673,6 +708,19 @@ def reserve_attempt(request: AttemptRequest) -> AttemptReservation:
                 limit_scope="global",
                 root_task_id=scope.root_task_id,
             )
+        daily_limit = _daily_limit_usd()
+        if daily_limit != float("inf"):
+            daily_rows = _rows_within_rolling_window(finals, hours=24.0)
+            daily_accounted = float(_summary(daily_rows)["accounted_usd"])
+            if daily_accounted >= daily_limit - 1e-9 or (
+                bound is not None and daily_accounted + bound > daily_limit + 1e-9
+            ):
+                raise BudgetExceeded(
+                    f"daily model budget exhausted (rolling 24h): accounted=${daily_accounted:.6f}, "
+                    f"reservation={'unknown' if bound is None else f'${bound:.6f}'}, limit=${daily_limit:.6f}",
+                    limit_scope="daily",
+                    root_task_id=scope.root_task_id,
+                )
         root_rows: Optional[list[Dict[str, Any]]] = None
         root_limit: Optional[float] = None
         if scope.root_task_id and scope.root_limit_usd is not None:
@@ -1101,6 +1149,17 @@ def settle_attempt(
 ) -> None:
     normalized = dict(usage or {})
     cost = _number(cost_usd)
+    # Owner-declared subscription route: openai-compatible traffic has zero
+    # marginal cash cost even if an upstream proxy reports catalog pricing.
+    # This keeps the internal USD ledger/budget from throttling subscription
+    # usage while leaving every other provider's accounting untouched.
+    zero_cost_compat = (
+        str(reservation.provider or "").strip().lower() == "openai-compatible"
+        and str(os.environ.get("OUROBOROS_ZERO_COST_OPENAI_COMPATIBLE", "")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if zero_cost_compat:
+        cost, cost_final = 0.0, True
     has_usage = bool(
         int(normalized.get("prompt_tokens") or normalized.get("input_tokens") or 0)
         or int(normalized.get("completion_tokens") or normalized.get("output_tokens") or 0)
