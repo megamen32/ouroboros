@@ -140,3 +140,29 @@ def test_list_skills_is_core_visible_for_repair(tmp_path):
     registry = ToolRegistry(repo_dir=tmp_path / "repo", drive_root=tmp_path / "data")
     names = {schema.get("name") or schema.get("function", {}).get("name") for schema in registry.schemas(core_only=True)}
     assert "list_skills" in names
+
+
+def test_large_tool_envelope_adds_mission_relevant_exact_name_index():
+    registry = _build_registry()
+    base = initial_tool_schemas(registry)
+    synthetic = list(base)
+    # Force a realistically large envelope while keeping the test independent of live MCP.
+    for i in range(220):
+        synthetic.append({"type": "function", "function": {"name": f"bulk_tool_{i}", "description": "", "parameters": {"type": "object", "properties": {}}}})
+    synthetic.extend([
+        {"type": "function", "function": {"name": "mcp_userio__userio_inbox_list_new", "description": "", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {"name": "mcp_userio__userio_draft_create", "description": "", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {"name": "mcp_telegram__telegram_search_messages", "description": "", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {"name": "mcp_telegram__telegram_read_messages", "description": "", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {"name": "mcp_unrelated__noop", "description": "", "parameters": {"type": "object", "properties": {}}}},
+    ])
+    messages = [{"role": "user", "content": "Process Telegram and UserIO backlog."}]
+    loop_mod._setup_dynamic_tools(registry, synthetic, messages)
+    notice = "\n".join(str(m.get("content") or "") for m in messages)
+    assert "Large active tool envelope" in notice
+    assert "mcp_userio__userio_inbox_list_new" in notice
+    assert "mcp_userio__userio_draft_create" in notice
+    assert "mcp_telegram__telegram_search_messages" in notice
+    assert "mcp_telegram__telegram_read_messages" in notice
+    assert "mcp_unrelated__noop" not in notice
+    assert "already active" in notice

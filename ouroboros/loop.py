@@ -3348,6 +3348,61 @@ def seal_task_transcript(
     ]
 
 
+_LARGE_TOOL_ENVELOPE_INDEX_THRESHOLD = 200
+_LARGE_TOOL_INDEX_PER_NAMESPACE = 14
+_LARGE_TOOL_INDEX_PRIORITY = (
+    "search", "read", "list", "find", "get", "status", "inbox", "conversation",
+    "draft", "create", "update", "append", "change", "download",
+)
+
+
+def _large_tool_capability_index(tool_schemas, messages) -> str:
+    """Return a compact exact-name index for mission-relevant MCP namespaces.
+
+    Very large function envelopes are technically complete but models can become
+    tool-blind and incorrectly claim a capability is absent.  Preserve the full
+    envelope and permissions; add only a navigation hint for namespaces explicitly
+    mentioned in the current conversation/task.
+    """
+    if len(tool_schemas) < _LARGE_TOOL_ENVELOPE_INDEX_THRESHOLD:
+        return ""
+    text_parts = []
+    for message in messages:
+        content = message.get("content", "") if isinstance(message, dict) else ""
+        if isinstance(content, str):
+            text_parts.append(content.lower())
+    mission_text = "\n".join(text_parts)
+    grouped = {}
+    for schema in tool_schemas:
+        name = str((schema.get("function", {}) or {}).get("name") or "")
+        if not name.startswith("mcp_") or "__" not in name:
+            continue
+        namespace = name[4:].split("__", 1)[0]
+        grouped.setdefault(namespace, []).append(name)
+    relevant = [ns for ns in sorted(grouped) if ns.lower() in mission_text]
+    if not relevant:
+        return ""
+
+    def rank(name: str):
+        low = name.lower()
+        scores = [idx for idx, token in enumerate(_LARGE_TOOL_INDEX_PRIORITY) if token in low]
+        return (min(scores) if scores else len(_LARGE_TOOL_INDEX_PRIORITY), low)
+
+    lines = [
+        "[SYSTEM NOTICE]",
+        f"Large active tool envelope: {len(tool_schemas)} tools. The tools below are already active; "
+        "do not report them as absent merely because the full schema list is hard to scan.",
+        "Mission-relevant MCP capability index (exact callable names):",
+    ]
+    for namespace in relevant:
+        names = sorted(grouped[namespace], key=rank)
+        shown = names[:_LARGE_TOOL_INDEX_PER_NAMESPACE]
+        suffix = f" (+{len(names)-len(shown)} more)" if len(names) > len(shown) else ""
+        lines.append(f"- {namespace} ({len(names)} tools){suffix}: " + ", ".join(shown))
+    lines.append("If a needed capability is not in this compact index, inspect the active tool list before concluding it is unavailable.")
+    return "\n".join(lines)
+
+
 def _setup_dynamic_tools(tools_registry, tool_schemas, messages):
     """Attach list/enable tool handlers and mutate the active schema list."""
     enabled_extra: set = set()
@@ -3356,6 +3411,9 @@ def _setup_dynamic_tools(tools_registry, tool_schemas, messages):
         for schema in tool_schemas
         if str(schema.get("function", {}).get("name") or "").strip()
     }
+    capability_index = _large_tool_capability_index(tool_schemas, messages)
+    if capability_index:
+        _append_or_merge_user_message(messages, capability_index)
 
     def _handle_list_tools(ctx=None, **kwargs):
         omissions = (
