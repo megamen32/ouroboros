@@ -39,6 +39,42 @@ def test_mcp_tool_error_is_semantic_failure():
     assert _extract_result_metadata("mcp_telegram__telegram_read_messages", result, True)["status"] != "ok"
 
 
+def test_mcp_validation_error_includes_current_tool_schema():
+    from types import SimpleNamespace
+    from ouroboros.loop_tool_execution import _schema_hint_for_validation_error
+
+    schema = {
+        "type": "function",
+        "function": {
+            "name": "mcp_todo__kanban_change",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"enum": ["new", "edit"]},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "fields": {"type": "object"},
+                },
+                "required": ["mode"],
+            },
+        },
+    }
+    registry = SimpleNamespace(get_schema_by_name=lambda name: schema if name == "mcp_todo__kanban_change" else None)
+    result = "⚠️ MCP_TOOL_ERROR: MCP error -32602: Input validation error"
+    out = _schema_hint_for_validation_error(registry, "mcp_todo__kanban_change", result)
+    assert "CURRENT_TOOL_INPUT_SCHEMA (mcp_todo__kanban_change)" in out
+    assert '"mode":{"enum":["new","edit"]}' in out
+    assert '"tags":{"type":"array"' in out
+
+
+def test_non_validation_mcp_error_does_not_append_schema():
+    from types import SimpleNamespace
+    from ouroboros.loop_tool_execution import _schema_hint_for_validation_error
+
+    registry = SimpleNamespace(get_schema_by_name=lambda _name: {"function": {"parameters": {"type": "object"}}})
+    result = "⚠️ MCP_TOOL_ERROR: upstream timeout"
+    assert _schema_hint_for_validation_error(registry, "mcp_x__y", result) == result
+
+
 def test_executor_failures_are_still_tool_failures():
     assert _is_tool_execution_failure(False, "anything")
     assert _is_tool_execution_failure(True, "⚠️ TOOL_ERROR (repo_commit): boom")

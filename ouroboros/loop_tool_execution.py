@@ -517,6 +517,36 @@ def _extract_result_metadata(fn_name: str, result: Any, is_error: bool) -> Dict[
     return meta
 
 
+def _schema_hint_for_validation_error(tools: ToolRegistry, fn_name: str, result: str) -> str:
+    """Append the current tool schema to MCP input-validation errors.
+
+    Autonomous runs sometimes lose or misremember a late-enabled MCP schema after
+    compaction.  A -32602 response without the actual schema makes the next model
+    round guess again.  Return a bounded, host-sourced correction hint so the next
+    call can repair its arguments deterministically.
+    """
+    text = str(result or "")
+    lowered = text.lower()
+    if "mcp_tool_error" not in lowered:
+        return text
+    if "-32602" not in lowered and "input validation" not in lowered and "invalid arguments" not in lowered:
+        return text
+    try:
+        schema = tools.get_schema_by_name(fn_name)
+    except Exception:
+        schema = None
+    if not isinstance(schema, dict):
+        return text
+    fn = schema.get("function") if isinstance(schema.get("function"), dict) else schema
+    parameters = fn.get("parameters") if isinstance(fn, dict) else None
+    if not isinstance(parameters, dict):
+        return text
+    compact = json.dumps(parameters, ensure_ascii=False, separators=(",", ":"))
+    if len(compact) > 6000:
+        compact = compact[:6000] + "…"
+    return text + f"\n\nCURRENT_TOOL_INPUT_SCHEMA ({fn_name}): {compact}"
+
+
 def _execute_single_tool(
     tools: ToolRegistry,
     tc: Dict[str, Any],
@@ -594,6 +624,8 @@ def _execute_single_tool(
         }, correlation, tool_call_id=tool_call_id))
 
     is_error = _is_tool_execution_failure(tool_ok, result)
+    if is_error:
+        result = _schema_hint_for_validation_error(tools, fn_name, result)
     result_meta = _extract_result_metadata(fn_name, result, is_error)
 
     trace_ref = {}
