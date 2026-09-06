@@ -5166,6 +5166,21 @@ def _enforce_swarm_actions(
     return True
 
 
+def _reasoning_only_no_tool_content(content: Any) -> tuple[bool, str]:
+    """Detect a provider response that contains private reasoning but no deliverable.
+
+    Some OpenAI-compatible routes return ``<think>...</think>`` as ``content`` even
+    when the model intended to make a tool call on the next step.  Treating that
+    wrapper as a final answer can terminalize an unfinished autonomous task with an
+    empty user-visible result.  Return the extracted reasoning for observability,
+    but never expose it as the delivery candidate.
+    """
+    if not isinstance(content, str) or not content.strip():
+        return False, ""
+    visible, reasoning = LLMClient._strip_reasoning_wrappers(content)
+    return bool(reasoning.strip() and not visible.strip()), reasoning.strip()
+
+
 def _no_tool_final_answer(
     content: Any,
     limit_ctx: _RoundLimitContext,
@@ -5177,6 +5192,18 @@ def _no_tool_final_answer(
 ) -> Optional[Tuple[str, Dict[str, Any], Dict[str, Any]]]:
     """Run the no-tool finalization gates; ``None`` requests another model round."""
     messages = limit_ctx.messages
+    reasoning_only, reasoning_text = _reasoning_only_no_tool_content(content)
+    if reasoning_only:
+        llm_trace.setdefault("reasoning_notes", []).append(reasoning_text)
+        _append_or_merge_user_message(
+            messages,
+            "[SYSTEM REMINDER] Your previous response contained only private reasoning and "
+            "no user-visible answer or tool call. The task is not complete. If an action is "
+            "still required, issue the required tool call now; otherwise provide a complete "
+            "visible final answer. Do not output only <think>/<reasoning> wrappers.",
+        )
+        emit_progress("Reasoning-only response ignored; continuing the task instead of finalizing.")
+        return None
     control_state, controlled_content = _resolve_delivery_control(
         content, tools, limit_ctx, llm_trace,
     )

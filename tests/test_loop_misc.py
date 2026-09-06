@@ -1801,3 +1801,19 @@ def test_undecodable_image_fails_the_attach_not_the_provider_call():
         vision._downscale_image_for_vlm(corrupt, "image/png")
     out, mime = vision._downscale_image_for_vlm(good, "image/png")
     assert out == good and mime == "image/png"
+
+
+def test_reasoning_only_no_tool_content_is_not_a_final_answer():
+    reasoning_only, note = loop_mod._reasoning_only_no_tool_content(
+        "<think>Journal append succeeded. Now send the Telegram reply.</think>"
+    )
+    assert reasoning_only is True
+    assert "Now send the Telegram reply" in note
+
+    reasoning_only, note = loop_mod._reasoning_only_no_tool_content(
+        "<think>I checked the state.</think>\nDone — the task is complete."
+    )
+    assert reasoning_only is False
+    assert "I checked the state" in note
+
+    assert loop_mod._reasoning_only_no_tool_content("Visible answer")[0] is False
