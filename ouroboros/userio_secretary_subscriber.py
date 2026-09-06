@@ -38,7 +38,7 @@ def active_task_id():
   description=str(task.get('description') or '').lower()
   if (source=='userio-mcp2' or schedule_id=='secretary-wake' or
       'personal_information_secretary' in purpose or 'секретар' in description):
-   return str(task.get('task_id') or '')
+   return str(task.get('task_id') or task.get('root_task_id') or '')
  return ''
 def wake():
  existing=active_task_id()
