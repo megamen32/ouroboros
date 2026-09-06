@@ -1,0 +1,14 @@
+[Unit]
+Description=Ouroboros UserIO MCP2 secretary subscriber
+After=network-online.target ouroboros.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/excode/ouroboros
+ExecStart=%h/excode/ouroboros/.venv/bin/python -m ouroboros.userio_secretary_subscriber
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
