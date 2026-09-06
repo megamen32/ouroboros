@@ -33,6 +33,12 @@ def test_domain_errors_are_not_treated_as_tool_failures():
     assert not _is_tool_execution_failure(True, "⚠️ GIT_ERROR (commit): hook rejected commit")
 
 
+def test_mcp_tool_error_is_semantic_failure():
+    result = "⚠️ MCP_TOOL_ERROR: MCP error -32602: invalid arguments"
+    assert _is_tool_execution_failure(True, result)
+    assert _extract_result_metadata("mcp_telegram__telegram_read_messages", result, True)["status"] != "ok"
+
+
 def test_executor_failures_are_still_tool_failures():
     assert _is_tool_execution_failure(False, "anything")
     assert _is_tool_execution_failure(True, "⚠️ TOOL_ERROR (repo_commit): boom")
