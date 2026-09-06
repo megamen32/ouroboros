@@ -50,3 +50,18 @@ def test_remote_context_overflow_is_not_logged_as_local(tmp_path, monkeypatch):
     assert '"type": "remote_context_overflow"' in lines
     assert '"type": "local_context_overflow"' not in lines
     assert usage["context_overflow_suggest_low"] is True
+
+
+def test_openrouter_maximum_input_tokens_is_context_overflow():
+    from ouroboros.loop_llm_call import classify_llm_exception
+
+    class BadRequestError(Exception):
+        status_code = 400
+
+    error = BadRequestError(
+        "Input exceeds maximum input tokens for openrouter/poolside/laguna-xs-2.1:free: "
+        "estimated 313651 input tokens, max 262144. Reduce the prompt or route to a larger model."
+    )
+    classified = classify_llm_exception(error, repr(error))
+    assert classified.kind == "context_overflow"
+    assert classified.retry_same_request is False

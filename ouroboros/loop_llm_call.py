@@ -362,6 +362,13 @@ _CONTEXT_OVERFLOW_MARKERS = (
     "exceeds the context",
     "context window",
     "input is too long",
+    # OpenRouter/provider-pool 400 shape, e.g.
+    # "Input exceeds maximum input tokens ... max 262144. Reduce the prompt".
+    # This is a context-window overflow, not a generic bad_request: classifying
+    # it correctly unlocks the existing one-shot Max -> Low recovery.
+    "maximum input tokens",
+    "max input tokens",
+    "reduce the prompt",
 )
 _NON_RETRYABLE_PROVIDER_MARKERS = {
     "quota_exhausted": (
