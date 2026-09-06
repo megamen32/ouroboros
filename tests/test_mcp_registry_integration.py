@@ -127,6 +127,28 @@ def test_schemas_cold_worker_loads_settings_and_refreshes_once(registry, monkeyp
     assert any(item.get("surface") == "mcp" and item.get("reason") == "resource_blocked" for item in registry.capability_omissions())
 
 
+def test_schemas_retry_empty_discovery_before_freezing_function_set(registry, monkeypatch):
+    class _RecoveringTransport(_FakeTransport):
+        def __init__(self):
+            super().__init__([])
+            self.responses = [[], [{"name": "ping", "description": "Ping", "input_schema": {"type": "object", "properties": {}}}]]
+
+        async def list_tools(self, cfg, timeout):
+            self.list_calls.append((cfg.id, timeout))
+            return list(self.responses.pop(0) if self.responses else self.response)
+
+    fake = _RecoveringTransport()
+    _wire_singleton(fake)
+
+    import ouroboros.config as config_mod
+
+    monkeypatch.setattr(config_mod, "load_settings", lambda: _settings(_good_server(id="svc")))
+
+    names = {schema["function"]["name"] for schema in registry.schemas()}
+    assert "mcp_svc__ping" in names
+    assert len(fake.list_calls) == 2
+
+
 def test_enabled_server_with_no_tools_surfaces_capability_omission(registry):
     """D1 (v6.39): an enabled MCP server that returns ZERO tools without raising must
     surface a `server_no_tools` capability-omission (so the absence isn't silent)."""

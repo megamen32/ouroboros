@@ -500,9 +500,30 @@ def test_manager_call_tool_returns_disabled_when_global_off():
 
 def test_manager_call_tool_returns_not_found_for_unknown():
     mgr = mcp_client.MCPManager()
+    fake = _FakeTransport()
+    fake.list_response = []
+    _wire_manager(mgr, fake)
     mgr.reconfigure(_settings(_good_server()))
     result = mgr.call_tool("mcp_demo__missing", {})
     assert "MCP_TOOL_NOT_FOUND" in result
+    assert len(fake.list_calls) == 1
+
+
+def test_manager_call_tool_auto_refreshes_empty_server_discovery():
+    mgr = mcp_client.MCPManager()
+    fake = _FakeTransport()
+    fake.list_response = [
+        {"name": "echo", "description": "", "input_schema": {"type": "object", "properties": {}}},
+    ]
+    fake.call_response = "recovered"
+    _wire_manager(mgr, fake)
+    mgr.reconfigure(_settings(_good_server(id="svc")))
+
+    result = mgr.call_tool("mcp_svc__echo", {"text": "hi"})
+
+    assert "recovered" in result
+    assert len(fake.list_calls) == 1
+    assert fake.call_calls == [("svc", "echo", {"text": "hi"}, 60)]
 
 
 def test_manager_call_tool_respects_allowlist():

@@ -853,34 +853,61 @@ class MCPManager:
             ],
         }
 
+    def _lookup_tool_descriptor_locked(
+        self, prefixed_name: str
+    ) -> tuple[Optional[tuple[MCPServerConfig, MCPTool]], Optional[str]]:
+        """Resolve one model-facing tool name while ``self._lock`` is held."""
+        for runtime in self._servers.values():
+            cfg = runtime.config
+            if not cfg.enabled:
+                continue
+            allowed = set(cfg.allowed_tools)
+            for tool in runtime.tools:
+                if tool.prefixed_name != prefixed_name:
+                    continue
+                if allowed and tool.raw_name not in allowed:
+                    return None, (
+                        f"⚠️ MCP_TOOL_DISALLOWED: {tool.raw_name!r} is not on the "
+                        f"allowed_tools list for server {cfg.id!r}."
+                    )
+                return (cfg, tool), None
+        return None, None
+
     def call_tool(self, prefixed_name: str, arguments: Dict[str, Any]) -> str:
         """Synchronously invoke an MCP tool and return a model-facing string."""
         if not self.is_enabled():
             return "⚠️ MCP_DISABLED: enable MCP in Settings → Advanced to use this tool."
+
         with self._lock:
-            tool_descriptor = None
-            for runtime in self._servers.values():
-                cfg = runtime.config
-                if not cfg.enabled:
-                    continue
-                allowed = set(cfg.allowed_tools)
-                for tool in runtime.tools:
-                    if tool.prefixed_name == prefixed_name:
-                        if allowed and tool.raw_name not in allowed:
-                            return (
-                                f"⚠️ MCP_TOOL_DISALLOWED: {tool.raw_name!r} is not on the "
-                                f"allowed_tools list for server {cfg.id!r}."
-                            )
-                        tool_descriptor = (cfg, tool)
-                        break
-                if tool_descriptor:
-                    break
-            if not tool_descriptor:
-                return (
-                    f"⚠️ MCP_TOOL_NOT_FOUND: {prefixed_name!r}. Refresh the server in "
-                    "Settings → Advanced or check the allowed_tools allowlist."
-                )
-            cfg, tool = tool_descriptor
+            tool_descriptor, policy_error = self._lookup_tool_descriptor_locked(prefixed_name)
+            refresh_server_id = ""
+            if not tool_descriptor and not policy_error and prefixed_name.startswith(TOOL_NAME_PREFIX):
+                server_part, separator, _tool_part = prefixed_name[len(TOOL_NAME_PREFIX):].partition("__")
+                candidate = canonical_server_id(server_part) if separator else ""
+                runtime = self._servers.get(candidate) if candidate else None
+                # A server with no discovered tools is usually a transient discovery
+                # omission. Refresh it once on demand instead of forcing the model or
+                # owner to repair Settings manually. Never widen allowlists here.
+                if runtime is not None and runtime.config.enabled and not runtime.tools:
+                    refresh_server_id = candidate
+
+        if policy_error:
+            return policy_error
+        if not tool_descriptor and refresh_server_id:
+            self.refresh_server(refresh_server_id)
+            with self._lock:
+                tool_descriptor, policy_error = self._lookup_tool_descriptor_locked(prefixed_name)
+            if policy_error:
+                return policy_error
+
+        if not tool_descriptor:
+            return (
+                f"⚠️ MCP_TOOL_NOT_FOUND: {prefixed_name!r}. Refresh the server in "
+                "Settings → Advanced or check the allowed_tools allowlist."
+            )
+
+        cfg, tool = tool_descriptor
+        with self._lock:
             timeout = self._tool_timeout_sec
         try:
             text = _run_async(
@@ -936,22 +963,32 @@ def reconfigure_from_settings(settings: Dict[str, Any]) -> None:
     get_manager().reconfigure(settings)
 
 
-def _retry_empty_tool_servers(manager: MCPManager) -> None:
+def _retry_empty_tool_servers(manager: MCPManager, *, synchronous: bool = False) -> None:
     """Recover workers that configured while an MCP server was unreachable.
 
     ``reconfigure`` compares a settings fingerprint, so a worker whose refresh
     failed during an outage keeps zero tools forever — the mtime check alone
-    never triggers a retry once the server is back. Retry empty-tool servers
-    in the background, rate-limited."""
+    never triggers a retry once the server is back. Normal callers retry in the
+    background, rate-limited. Capability builders pass ``synchronous=True`` so
+    a fast second discovery attempt can populate the model's function set before
+    schemas are frozen for the task.
+    """
     global _EMPTY_TOOLS_RETRY_AT
     if not manager.is_configured():
         return
-    if not manager.enabled_servers_without_tools():
+    empty_servers = manager.enabled_servers_without_tools()
+    if not empty_servers:
         return
     now = time.monotonic()
     if now < _EMPTY_TOOLS_RETRY_AT:
         return
     _EMPTY_TOOLS_RETRY_AT = now + _EMPTY_TOOLS_RETRY_COOLDOWN_SEC
+    if synchronous:
+        for server in empty_servers:
+            server_id = canonical_server_id(server.get("id") or "")
+            if server_id:
+                manager.refresh_server(server_id)
+        return
     manager.refresh_all_background(reason="empty_tools_retry")
 
 
@@ -967,12 +1004,12 @@ def ensure_configured_from_settings(*, refresh: bool = False) -> None:
     if manager.is_configured() and (
         manager.settings_mtime_ns() is None or manager.settings_mtime_ns() == mtime_ns
     ):
-        _retry_empty_tool_servers(manager)
+        _retry_empty_tool_servers(manager, synchronous=refresh)
         return
     changed = manager.reconfigure(load_settings(), settings_mtime_ns=mtime_ns)
     if refresh and changed:
         manager.refresh_all()
-    _retry_empty_tool_servers(manager)
+    _retry_empty_tool_servers(manager, synchronous=refresh)
 
 
 def refresh_all_background(*, reason: str = "settings") -> None:
