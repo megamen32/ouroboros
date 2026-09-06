@@ -5,17 +5,45 @@ from pathlib import Path
 SETTINGS=Path(os.environ.get("OUROBOROS_SETTINGS","/home/roomhacker/Ouroboros/data/settings.json"))
 OUROBOROS_URL=os.environ.get("OUROBOROS_URL","http://127.0.0.1:8765").rstrip('/')
 URI="userio://inbox/unread"
-PROMPT='''Event-driven personal secretary ingest. New messages are available in Universal UserIO. Primary working language: Russian. This is NOT permission to auto-send replies.
+PROMPT='''Event-driven personal secretary ingest. New messages are available in Universal UserIO. Primary working language: Russian. This is NOT a scheduled wake-up and NOT permission to auto-send replies.
 
-Follow the current personal_information_secretary mission; old cron-secretary/curfew/digest/mandate rules are deprecated.
-1. Read newest unread UserIO items and identify information not yet reflected in AFFiNE/todo.
-2. Read relevant Telegram/UserIO/AFFiNE context. For Telegram, prioritize owner's DMs, «ИИ Frontier», «ИИ бенчмарки», Artem Popov and Oleg Karpov when relevant, then other conversations.
-3. Update or create useful AFFiNE artifacts: people profiles, meetings, projects, agreements, ideas and links. Preserve provenance (source, message_id/conversation_id/date when available) and distinguish source facts from your conclusions.
-4. Create/update todo cards for explicit commitments, next steps, deadlines and reminders; deduplicate against existing cards.
-5. If a useful reply should be prepared, create/update a UserIO draft. Do NOT approve/send automatically.
-6. Use direct AFFiNE MCP create/update tools when needed; the idempotent affine_writer may be used for append-only notes when appropriate.
-7. Prefer useful organization over infrastructure self-checks or self-reflection. If nothing useful arrived, finish quietly.
+Follow the current personal_information_secretary mission, but keep these architecture invariants:
+1. Read newest unread UserIO items and identify useful information not yet reflected in AFFiNE/todo.
+2. Read relevant UserIO/AFFiNE context using read-only mcp_affine tools.
+3. Extract facts, commitments, tasks, people/project updates and document references. Preserve provenance (source, message_id, conversation_id/date when available) and distinguish source facts from conclusions.
+4. For AFFiNE writes use ONLY mcp_affine_writer__propose_append then mcp_affine_writer__commit_append. Never use direct AFFiNE create/update/append/delete tools.
+5. If a useful reply should be prepared, create/update a UserIO draft. Never approve/send automatically.
+6. Do not enable or recreate secretary cron/wakeup schedules. UserIO MCP resource events are the wake mechanism.
+7. Prefer useful organization over self-reflection. If nothing useful arrived, finish quietly.
 '''
+
+
+AFFINE_READ_ONLY_TOOLS=[
+ 'list_workspaces','get_workspace','list_docs','search_docs','find_doc_by_title','list_tags','list_docs_by_tag',
+ 'get_doc','read_doc','get_capabilities','analyze_doc_fidelity','export_doc_markdown','export_with_fidelity_report',
+ 'list_workspace_tree','get_orphan_docs','list_children','inspect_template_structure','read_database_cells',
+ 'read_database_columns','get_edgeless_canvas','list_comments','list_histories','list_collections','get_collection',
+ 'list_organize_nodes','list_doc_properties','get_doc_icon','get_folder_icon','current_user','list_notifications'
+]
+SCHEDULES=Path('/home/roomhacker/Ouroboros/data/state/scheduled_tasks.json')
+
+def enforce_architecture_invariants():
+ changed=False
+ d=json.loads(SETTINGS.read_text())
+ for server in d.get('MCP_SERVERS',[]):
+  if server.get('id')=='affine' and server.get('allowed_tools')!=AFFINE_READ_ONLY_TOOLS:
+   server['allowed_tools']=list(AFFINE_READ_ONLY_TOOLS); changed=True
+ if changed:
+  tmp=SETTINGS.with_suffix('.json.tmp'); tmp.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n'); tmp.replace(SETTINGS)
+  print('restored direct AFFiNE read-only allowlist',flush=True)
+ if SCHEDULES.exists():
+  sd=json.loads(SCHEDULES.read_text()); tasks=sd if isinstance(sd,list) else sd.get('tasks',[]); sch_changed=False
+  for task in tasks:
+   if task.get('id')=='secretary-wake' and (task.get('enabled') or task.get('next_run_at')):
+    task['enabled']=False; task['next_run_at']=None; task['updated_at']=__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(); sch_changed=True
+  if sch_changed:
+   tmp=SCHEDULES.with_suffix('.json.tmp'); tmp.write_text(json.dumps(sd,ensure_ascii=False,indent=2)+'\n'); tmp.replace(SCHEDULES)
+   print('disabled legacy secretary-wake schedule',flush=True)
 
 def cfg():
  d=json.loads(SETTINGS.read_text()); s=next(x for x in d.get('MCP_SERVERS',[]) if x.get('id')=='userio'); return s['url'],s.get('auth_header') or 'Authorization',s.get('auth_token') or ''
@@ -61,6 +89,7 @@ def main():
  last=0.0
  while True:
   try:
+   enforce_architecture_invariants()
    url,h,t=cfg()
    if stream_once(url,h,t):
     now=time.time()
