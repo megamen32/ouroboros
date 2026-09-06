@@ -59,3 +59,45 @@ def test_wake_coalesces_when_tasks_api_exposes_only_root_task_id(monkeypatch):
 
     assert subscriber.wake() == "scheduled-secretary-456"
     assert calls == ["GET"]
+
+
+def test_checkpoint_deduplicates_processed_pending_and_inflight(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "checkpoint.json"
+    monkeypatch.setattr(subscriber, "STATE_PATH", checkpoint)
+    state = subscriber._default_state()
+    state["processed_ids"] = ["old"]
+    state["pending_ids"] = ["pending"]
+    state["in_flight"] = {"task_id": "t1", "message_ids": ["running"]}
+    subscriber.save_state(state)
+
+    current = subscriber.load_state()
+    assert subscriber.collect_new_ids(current, ["old", "pending", "running", "new-a", "new-b"]) == ["new-a", "new-b"]
+    assert subscriber.enqueue_snapshot(current, ["old", "pending", "running", "new-a", "new-b"]) == ["new-a", "new-b"]
+    saved = subscriber.load_state()
+    assert saved["pending_ids"] == ["pending", "new-a", "new-b"]
+
+
+def test_reconcile_completed_inflight_moves_ids_to_processed(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "checkpoint.json"
+    monkeypatch.setattr(subscriber, "STATE_PATH", checkpoint)
+    state = subscriber._default_state()
+    state["in_flight"] = {"task_id": "done-1", "message_ids": ["m1", "m2"]}
+    subscriber.save_state(state)
+    monkeypatch.setattr(subscriber, "task_status", lambda _task_id: "completed")
+
+    result = subscriber.reconcile_state(subscriber.load_state())
+    assert result["in_flight"] is None
+    assert result["processed_ids"] == ["m1", "m2"]
+
+
+def test_reconcile_failed_inflight_returns_ids_to_pending(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "checkpoint.json"
+    monkeypatch.setattr(subscriber, "STATE_PATH", checkpoint)
+    state = subscriber._default_state()
+    state["in_flight"] = {"task_id": "failed-1", "message_ids": ["m1"]}
+    subscriber.save_state(state)
+    monkeypatch.setattr(subscriber, "task_status", lambda _task_id: "failed")
+
+    result = subscriber.reconcile_state(subscriber.load_state())
+    assert result["in_flight"] is None
+    assert result["pending_ids"] == ["m1"]
