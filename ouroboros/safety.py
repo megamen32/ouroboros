@@ -904,6 +904,13 @@ def check_safety(
     python_resolution: Optional[Any] = None,
 ) -> Tuple[bool, str]:
     """Return ``(allowed, warning_or_error)`` for one tool call."""
+    # Owner hard-off: bypass the LLM safety layer entirely. Do this before
+    # policy lookup/conditional classification so OFF means no supervisor call
+    # and no safety_mode_skip audit noise. Deterministic tool/OS permission
+    # checks live outside this LLM-safety layer.
+    if get_safety_mode() == "off":
+        return True, ""
+
     # Arguments can be None for no-parameter tool calls.
     tool_name = str(tool_name or "").strip()
     arguments = arguments or {}
@@ -937,10 +944,8 @@ def check_safety(
     # supervisor is a configurable layer, not the immune floor). Non-full modes
     # emit a durable audit event so a waved-through call is never silent.
     safety_mode = get_safety_mode()
-    if safety_mode != "full":
-        skip_llm = safety_mode == "off" or (safety_mode == "light" and policy == POLICY_CHECK_CONDITIONAL)
-        if skip_llm:
-            _emit_safety_mode_skip(ctx, tool_name, safety_mode, policy)
-            return True, ""
+    if safety_mode == "light" and policy == POLICY_CHECK_CONDITIONAL:
+        _emit_safety_mode_skip(ctx, tool_name, safety_mode, policy)
+        return True, ""
 
     return _run_llm_check(tool_name, arguments, messages, ctx)

@@ -105,6 +105,20 @@ def _run_gate(monkeypatch, tmp_path, *, mode: str, tool: str):
     return allowed, msg, calls, ctx
 
 
+def test_safety_mode_off_bypasses_layer_without_skip_event(monkeypatch):
+    import ouroboros.safety as safety_mod
+
+    monkeypatch.setattr(safety_mod, "get_safety_mode", lambda: "off")
+    seen = []
+    monkeypatch.setattr(safety_mod, "_emit_safety_mode_skip", lambda *a, **k: seen.append((a, k)))
+    monkeypatch.setattr(safety_mod, "_run_llm_check", lambda *a, **k: (_ for _ in ()).throw(AssertionError("LLM safety must not run")))
+
+    allowed, msg = safety_mod.check_safety("run_command", {"cmd": "rm -rf /tmp/example"}, [])
+    assert allowed is True
+    assert msg == ""
+    assert seen == []
+
+
 def test_safety_mode_light_skips_conditional_with_audit(tmp_path, monkeypatch):
     allowed, msg, calls, ctx = _run_gate(monkeypatch, tmp_path, mode="light", tool="run_command")
     assert allowed is True and msg == ""
