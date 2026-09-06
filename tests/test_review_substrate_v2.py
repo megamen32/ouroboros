@@ -392,6 +392,38 @@ def test_collect_turn_diff_surfaces_tracked_and_untracked(tmp_path):
     assert "test_new.py" in diff  # the untracked self-authored test is visible
 
 
+def test_collect_turn_diff_excludes_preexisting_dirty_with_task_baseline(tmp_path, monkeypatch):
+    """Task acceptance must not blame the current task for dirty paths that the
+    host mutation baseline already classified as pre-existing."""
+    import subprocess as sp
+    from types import SimpleNamespace as NS
+
+    import ouroboros.mutation_attribution as ma
+    from ouroboros.review_evidence import collect_turn_diff
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    sp.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    (repo / "old.py").write_text("old = 1\n", encoding="utf-8")
+    (repo / "new.py").write_text("new = 1\n", encoding="utf-8")
+    sp.run(["git", "add", "old.py", "new.py"], cwd=repo, check=True, capture_output=True)
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "i"],
+           cwd=repo, check=True, capture_output=True)
+    (repo / "old.py").write_text("old = 2\n", encoding="utf-8")
+    (repo / "new.py").write_text("new = 2\n", encoding="utf-8")
+
+    monkeypatch.setattr(ma, "attributed_git_candidates", lambda *a, **k: {
+        "candidates": ["new.py"],
+        "excluded_preexisting_dirty": ["old.py"],
+        "blockers": [],
+        "canonical_root": str(repo),
+    })
+    diff = collect_turn_diff(NS(repo_dir=repo), results_drive_root=tmp_path, task_id="task-1")
+    assert "new.py" in diff
+    assert "old.py" not in diff
+    assert "excluded 1 pre-existing dirty path" in diff
+
+
 def test_collect_turn_diff_untracked_survives_large_tracked_diff(tmp_path):
     """T1 round-2 fix: a large tracked diff must NOT clip away the untracked
     new-file names (independent truncation)."""

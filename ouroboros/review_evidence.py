@@ -15,7 +15,10 @@ from ouroboros.utils import truncate_review_artifact
 log = logging.getLogger(__name__)
 
 
-def collect_turn_diff(ctx: Any, *, limit: int = 20000, include_recent_commit: bool = False) -> str:
+def collect_turn_diff(
+    ctx: Any, *, limit: int = 20000, include_recent_commit: bool = False,
+    results_drive_root: Any = None, task_id: str = "",
+) -> str:
     """Best-effort WORKING-TREE diff of the active workspace/repo for task-
     acceptance review evidence, so the reviewer can judge EVIDENCE INDEPENDENCE
     (which test/check files the agent itself wrote or modified). A structural
@@ -48,6 +51,30 @@ def collect_turn_diff(ctx: Any, *, limit: int = 20000, include_recent_commit: bo
         except (subprocess.SubprocessError, OSError):
             return ""
 
+    # If task-start mutation evidence exists, reuse its exact Git candidate set.
+    # This prevents a reviewer from attributing persistent owner/previous-task WIP
+    # to the current task merely because it is still dirty at acceptance time.
+    attributed_paths: list[str] | None = None
+    excluded_preexisting: list[str] = []
+    if results_drive_root is not None and str(task_id or "").strip():
+        try:
+            from ouroboros.mutation_attribution import attributed_git_candidates
+
+            attribution = attributed_git_candidates(results_drive_root, str(task_id), repo)
+            fatal = {
+                "baseline_missing", "baseline_surface_missing",
+                "baseline_surface_ambiguous", "baseline_dirty_overflow",
+                "candidate_scan_failed",
+            }
+            blockers = {str(x) for x in attribution.get("blockers") or []}
+            if attribution.get("canonical_root") and not (blockers & fatal):
+                attributed_paths = [str(x) for x in attribution.get("candidates") or []]
+                excluded_preexisting = [
+                    str(x) for x in attribution.get("excluded_preexisting_dirty") or []
+                ]
+        except Exception:
+            log.debug("Task-attributed repo diff unavailable; falling back to worktree diff", exc_info=True)
+
     # Truncate the tracked diff and the untracked-file list INDEPENDENTLY, so a
     # large tracked diff never clips away the untracked new-file names (a
     # self-authored test the agent just wrote is the most important signal here).
@@ -55,9 +82,20 @@ def collect_turn_diff(ctx: Any, *, limit: int = 20000, include_recent_commit: bo
     # repo (external-workspace tasks). A repo-configured external-diff or textconv
     # driver would otherwise execute an arbitrary command ON THE HOST while
     # collecting review evidence — disable both rendering hooks (Bible P3).
-    tracked = _git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD"])
+    tracked_args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD"]
+    if attributed_paths is not None:
+        tracked_args.extend(["--", *attributed_paths])
+    tracked = _git(tracked_args) if attributed_paths is None or attributed_paths else ""
     diff = truncate_review_artifact(tracked, limit=limit)
     untracked = _git(["ls-files", "--others", "--exclude-standard"]).strip()
+    if attributed_paths is not None and untracked:
+        allowed = set(attributed_paths)
+        untracked = "\n".join(x for x in untracked.splitlines() if x in allowed)
+    if attributed_paths is not None and excluded_preexisting:
+        diff = (
+            f"{diff}\n# Task mutation baseline excluded "
+            f"{len(excluded_preexisting)} pre-existing dirty path(s) from repo_diff.\n"
+        )
     if untracked:
         untracked = truncate_review_artifact(untracked, limit=4000)
         # Honest label: these are ALL untracked working-tree files, not a proven
@@ -954,7 +992,12 @@ def build_task_acceptance_evidence(
         if delta_aggregate:
             ev["capability_deltas"] = redact_projection(delta_aggregate).value
             prov["capability_deltas"] = "host_attested"
-    ev["repo_diff"] = collect_turn_diff(ctx, include_recent_commit=include_recent_commit)
+    ev["repo_diff"] = collect_turn_diff(
+        ctx,
+        include_recent_commit=include_recent_commit,
+        results_drive_root=drive_root,
+        task_id=task_id,
+    )
     prov["repo_diff"] = "host_attested"
     if subtree_statuses is not None:
         ev["terminal_subtree_statuses"] = [dict(row) for row in subtree_statuses if isinstance(row, dict)]
